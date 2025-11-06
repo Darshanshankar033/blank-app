@@ -6,8 +6,6 @@ st.write(
     "Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."
 )
 
-
-
 client = OpenAI(
   base_url="https://openrouter.ai/api/v1",
   api_key="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",
@@ -16,7 +14,7 @@ client = OpenAI(
 completion = client.chat.completions.create(
   extra_headers={
     "HTTP-Referer": "<YOUR_SITE_URL>", # Optional. Site URL for rankings on openrouter.ai.
-    "X-Title": "<YOUR_SITE_NAME>", # Optional. Site title for rankings on openrouter.ai.
+    "X-Title": "Project", # Optional. Site title for rankings on openrouter.ai.
   },
   extra_body={},
   model="openai/gpt-oss-20b:free",
