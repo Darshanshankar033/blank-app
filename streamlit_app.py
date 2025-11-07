@@ -1,3 +1,4 @@
+
 import streamlit as st
 from openai import OpenAI
 
@@ -36,7 +37,7 @@ if user_input:
     try:
         with st.spinner("Thinking..."):
             completion = client.chat.completions.create(
-                model="gryphe/mythomax-l2-13b:free",
+                model="openai/gpt-oss-20b:free",
                 messages=st.session_state["messages"],  # full chat history
                 extra_headers={
                     "HTTP-Referer": "https://yourappname.streamlit.app",
