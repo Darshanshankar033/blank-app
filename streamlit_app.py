@@ -1,103 +1,112 @@
 import streamlit as st
-import pandas as pd
 from openai import OpenAI
+import pdfplumber
 
-# --- Page Config ---
-st.set_page_config(page_title="OpenRouter Chat", page_icon="🎈", layout="wide")
-st.title("🎈 OpenRouter Chat App with Memory + Full File Reading")
+# ---------------------------------
+# ⚙️ Page Configuration
+# ---------------------------------
+st.set_page_config(page_title="OpenRouter Chatbot", page_icon="💬", layout="centered")
 
-# --- Initialize Chat Memory ---
-if "messages" not in st.session_state:
-    st.session_state["messages"] = [
-        {"role": "system", "content": "You are a helpful assistant that can also analyze full uploaded files."}
-    ]
+st.title("💬 OpenRouter Chatbot with Memory & File Upload")
+st.caption("Chat with memory, upload documents, and get responses powered by OpenRouter!")
 
-# --- Initialize OpenRouter Client ---
+# ---------------------------------
+# 🔑 API Key (Inline)
+# ---------------------------------
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key="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"  # Replace with your OpenRouter key
+    api_key="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",  # your key here
 )
 
-# --- Display Chat History ---
-st.subheader("💬 Chat History")
-chat_container = st.container()
-with chat_container:
-    for msg in st.session_state["messages"]:
-        if msg["role"] == "user":
-            st.markdown(f"**🧑 You:** {msg['content']}")
-        elif msg["role"] == "assistant":
-            st.markdown(f"**🤖 Assistant:** {msg['content']}")
+# ---------------------------------
+# 🧠 Initialize Session State for Memory
+# ---------------------------------
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {"role": "system", "content": "You are a helpful assistant that answers based on the chat history and uploaded file."}
+    ]
 
-# --- Spacer ---
-st.markdown("<br><br>", unsafe_allow_html=True)
-st.markdown("---")
+if "file_context" not in st.session_state:
+    st.session_state.file_context = ""
 
-# --- User Input Section ---
-user_input = st.text_input("💬 Type your message:", key="input_box")
+# ---------------------------------
+# 📂 File Upload Section
+# ---------------------------------
+uploaded_file = st.file_uploader("📎 Upload a file (TXT, CSV, or PDF):", type=["txt", "csv", "pdf"])
 
-# --- File Upload + Clear Chat Below Input ---
-col1, col2 = st.columns([3, 1])
-
-with col1:
-    uploaded_file = st.file_uploader("📎 Upload a file (CSV, TXT, or PDF)", type=["csv", "txt", "pdf"])
-
-with col2:
-    if st.button("🧹 Clear Chat"):
-        st.session_state["messages"] = [
-            {"role": "system", "content": "You are a helpful assistant that can also analyze full uploaded files."}
-        ]
-        st.success("Chat and file cleared!")
-
-# --- Read Full File Content ---
-file_content = ""
 if uploaded_file:
-    st.success(f"✅ Uploaded: {uploaded_file.name}")
+    file_text = ""
 
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-        st.subheader("📄 CSV Preview")
-        st.dataframe(df)
-        file_content = df.to_csv(index=False)  # full CSV
+    if uploaded_file.type == "application/pdf":
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    file_text += text
 
-    elif uploaded_file.name.endswith(".txt"):
-        file_content = uploaded_file.read().decode("utf-8")
-        st.text_area("📄 Full TXT Content", file_content, height=300)
+    else:  # TXT or CSV
+        file_text = uploaded_file.read().decode("utf-8", errors="ignore")
 
-    elif uploaded_file.name.endswith(".pdf"):
-        try:
-            import PyPDF2
-            pdf_reader = PyPDF2.PdfReader(uploaded_file)
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text() or ""
-            file_content = text
-            st.text_area("📄 Full PDF Text", file_content, height=300)
-        except ImportError:
-            st.warning("⚠️ PyPDF2 not installed. Run `pip install PyPDF2` to enable PDF support.")
+    st.session_state.file_context = file_text[:6000]  # Limit context size
+    st.success(f"✅ File '{uploaded_file.name}' uploaded successfully and content added to memory!")
 
-# --- Chat Logic ---
-if user_input:
-    full_message = user_input
-    if file_content:
-        # Limit to avoid hitting LLM context limit (optional)
-        trimmed_content = file_content[:10000]  # 10K chars safe limit
-        full_message += f"\n\n(Attached file content for analysis):\n{trimmed_content}"
+# ---------------------------------
+# 💬 Display Chat History
+# ---------------------------------
+for msg in st.session_state.messages:
+    if msg["role"] != "system":
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    st.session_state["messages"].append({"role": "user", "content": full_message})
+# ---------------------------------
+# 🧠 Chat Input Bar (BOTTOM)
+# ---------------------------------
+if user_input := st.chat_input("Type your message here..."):
+    # Add user's message
+    st.session_state.messages.append({"role": "user", "content": user_input})
 
-    try:
+    # Display user's message
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    # Prepare combined context (file + chat)
+    combined_prompt = user_input
+    if st.session_state.file_context:
+        combined_prompt = (
+            f"The following file content is provided:\n\n"
+            f"{st.session_state.file_context}\n\n"
+            f"Now continue this chat based on both the conversation and the file content. "
+            f"User says: {user_input}"
+        )
+
+    # Generate model response
+    with st.chat_message("assistant"):
         with st.spinner("🤔 Thinking..."):
-            completion = client.chat.completions.create(
-                model="openai/gpt-oss-20b:free",
-                messages=st.session_state["messages"],
-                extra_headers={
-                    "HTTP-Referer": "https://yourappname.streamlit.app",
-                    "X-Title": "Chat with Memory and Full File Reading",
-                },
-            )
-            reply = completion.choices[0].message.content
-            st.session_state["messages"].append({"role": "assistant", "content": reply})
-            st.markdown(f"**🤖 Assistant:** {reply}")
+            try:
+                completion = client.chat.completions.create(
+                    model="openai/gpt-oss-20b:free",
+                    messages=st.session_state.messages + [{"role": "user", "content": combined_prompt}],
+                    extra_headers={
+                        "HTTP-Referer": "https://your-streamlit-app-url",  # optional
+                        "X-Title": "Streamlit Chatbot with Memory",
+                    },
+                )
+                response = completion.choices[0].message.content
+            except Exception as e:
+                response = f"⚠️ Error: {e}"
 
-    except Exception as e:
-        st.error(f"Error: {e}")
+            st.markdown(response)
+
+    # Save assistant response in memory
+    st.session_state.messages.append({"role": "assistant", "content": response})
+
+# ---------------------------------
+# 🧹 Reset Chat Option
+# ---------------------------------
+st.sidebar.header("⚙️ Chat Settings")
+if st.sidebar.button("🗑️ Clear Chat"):
+    st.session_state.messages = [
+        {"role": "system", "content": "You are a helpful assistant that answers based on the chat history and uploaded file."}
+    ]
+    st.session_state.file_context = ""
+    st.sidebar.success("Chat memory cleared!")
