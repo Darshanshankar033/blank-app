@@ -18,7 +18,7 @@ st.caption("Upload your data and ask the AI to write and run Python code for vis
 # ---------------------------------
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key="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",
+    api_key="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",
 )
 
 # ---------------------------------
