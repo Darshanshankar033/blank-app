@@ -79,7 +79,7 @@ with left_col:
         with st.spinner("Generating AI insights..."):
             try:
                 summary = client.chat.completions.create(
-                    model="mistralai/mixtral-8x7b",
+                    model="openai/gpt-oss-20b:free",
                     messages=[
                         {"role": "user", "content": f"Summarize this dataset or document:\n\n{file_content[:6000]}"},
                     ],
