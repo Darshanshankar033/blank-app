@@ -113,7 +113,7 @@ if user_input := right_col.chat_input("Ask a question about your data or file...
     prompt = f"{context}\n\nUser question: {user_input}"
 
     with right_col.chat_message("assistant"):
-        with right_col.spinner("🤔 Thinking..."):
+        with st.spinner("🤔 Thinking..."):
             try:
                 response = client.chat.completions.create(
                     model="openai/gpt-oss-20b:free",
