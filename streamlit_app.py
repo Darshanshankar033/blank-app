@@ -2,34 +2,36 @@ import streamlit as st
 from openai import OpenAI
 import pandas as pd
 import pdfplumber
+import matplotlib.pyplot as plt
+import seaborn as sns
 import io
 import contextlib
-import matplotlib.pyplot as plt
+import re
 
-# ---------------------------------
+# -------------------------------
 # ⚙️ PAGE CONFIG
-# ---------------------------------
+# -------------------------------
 st.set_page_config(page_title="AI Insight Dashboard", page_icon="📊", layout="wide")
-st.title("📊 AI Insight Dashboard with AI Code Generator")
-st.caption("Upload your data and ask the AI to write and run Python code for visualization or analysis.")
+st.title("📊 AI Insight Dashboard with AI Code Generator & Data Cleaner")
+st.caption("Upload your dataset, let AI write Python visualization code, clean your data, and run it instantly.")
 
-# ---------------------------------
-# 🔑 OpenRouter API Setup
-# ---------------------------------
+# -------------------------------
+# 🔑 OPENROUTER API CLIENT
+# -------------------------------
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key="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",
+    api_key="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",  # Replace with your valid key
 )
 
-# ---------------------------------
-# 🧭 PAGE LAYOUT
-# ---------------------------------
+# -------------------------------
+# 🧭 LAYOUT
+# -------------------------------
 left_col, right_col = st.columns([1, 1])
 
-# ---------------------------------
-# 📂 FILE UPLOAD SECTION
-# ---------------------------------
-uploaded_file = right_col.file_uploader("📎 Upload a file (CSV, TXT, or PDF):", type=["csv", "txt", "pdf"])
+# -------------------------------
+# 📂 FILE UPLOAD
+# -------------------------------
+uploaded_file = right_col.file_uploader("📎 Upload a dataset (CSV, TXT, or PDF):", type=["csv", "txt", "pdf"])
 dataframe = None
 file_content = ""
 
@@ -50,22 +52,38 @@ if uploaded_file:
                     file_content += text
         right_col.text_area("📄 Extracted PDF Text", file_content[:1000])
 
-# ---------------------------------
+# -------------------------------
+# 🧹 CLEAN DATA BUTTON
+# -------------------------------
+if dataframe is not None:
+    if st.button("🧽 Clean Data"):
+        with st.spinner("Cleaning data..."):
+            df = dataframe.copy()
+            # Remove duplicates
+            df = df.drop_duplicates()
+            # Replace missing numeric values with mean, categorical with mode
+            for col in df.columns:
+                if df[col].dtype in ['float64', 'int64']:
+                    df[col] = df[col].fillna(df[col].mean())
+                else:
+                    df[col] = df[col].fillna(df[col].mode()[0] if not df[col].mode().empty else "Unknown")
+            st.success("✅ Data cleaned successfully!")
+            st.write("### 🧾 Cleaned Data Preview")
+            st.dataframe(df.head(), use_container_width=True)
+            dataframe = df  # Update cleaned data
+
+# -------------------------------
 # 🧠 AUTO INSIGHTS / SUMMARY
-# ---------------------------------
+# -------------------------------
 with left_col:
     st.subheader("🧠 Auto Insights & Summary")
-
     if uploaded_file:
         with st.spinner("Generating AI insights..."):
             try:
                 summary = client.chat.completions.create(
                     model="openai/gpt-oss-20b:free",
                     messages=[
-                        {
-                            "role": "user",
-                            "content": f"Provide a brief summary of this dataset or document:\n\n{file_content[:6000]}"
-                        }
+                        {"role": "user", "content": f"Summarize the following dataset or text:\n\n{file_content[:6000]}"},
                     ],
                     extra_headers={
                         "HTTP-Referer": "http://localhost:8501",
@@ -76,14 +94,14 @@ with left_col:
                 st.success("✅ Summary Generated")
                 st.write(insight_text)
             except Exception as e:
-                st.error(f"⚠️ Error generating summary: {e}")
+                st.error(f"⚠️ Error generating insights: {e}")
     else:
-        st.info("Upload a file to generate insights.")
+        st.info("Upload a file to get AI-generated insights.")
 
-# ---------------------------------
-# 💬 CHAT / CODE GENERATOR
-# ---------------------------------
-right_col.subheader("💬 Ask AI to Generate Visualization Code")
+# -------------------------------
+# 💬 CODE GENERATOR + EXECUTOR
+# -------------------------------
+right_col.subheader("💬 Ask AI to Generate and Run Code")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -93,39 +111,33 @@ for msg in st.session_state.messages:
     with right_col.chat_message(msg["role"]):
         right_col.markdown(msg["content"])
 
-# Chat input
-if user_prompt := right_col.chat_input("Ask something like: 'Plot sales vs profit as a bar chart'..."):
+# Input from user
+if user_prompt := right_col.chat_input("Ask: 'Plot sales vs profit' or 'Show correlation heatmap'..."):
     st.session_state.messages.append({"role": "user", "content": user_prompt})
+
     with right_col.chat_message("user"):
         right_col.markdown(user_prompt)
 
-    # Context from file/dataset
     context = ""
     if dataframe is not None:
-        context = f"The dataset columns are: {', '.join(dataframe.columns)}.\nThe dataframe variable name is 'df'."
-    elif file_content:
-        context = "A text document is uploaded."
+        context = f"Columns available: {', '.join(dataframe.columns)}. The dataframe is called df."
 
-    # 🔥 Ask LLM to write visualization code
     full_prompt = f"""
-You are an expert Python data analyst using Streamlit and matplotlib.
+You are an expert Python data analyst using Streamlit, pandas, matplotlib, and seaborn.
+Dataset info: {context}
 
-A user uploaded a dataset. You are given this information:
-{context}
-
-Write a **Python code snippet only**, no explanations, that performs the user's request:
+Generate **only executable Python code** (no explanations, no markdown fences) that performs the user request:
 '{user_prompt}'
 
 Rules:
-- Assume the dataset is available as a pandas DataFrame called 'df'.
-- Import only necessary libraries (matplotlib, seaborn, pandas).
-- Use matplotlib or seaborn to display charts.
-- Do not include file uploads or print statements.
-- Your code must end with `st.pyplot(plt.gcf())` to render in Streamlit.
+- Use the variable 'df' for the dataframe.
+- Always end the code with `st.pyplot(plt.gcf())` to display the visualization.
+- Import matplotlib.pyplot as plt and seaborn as sns if needed.
+- No markdown or triple backticks, only raw code.
 """
 
     with right_col.chat_message("assistant"):
-        with st.spinner("🧠 Generating code with AI..."):
+        with st.spinner("🧠 Generating Python code..."):
             try:
                 completion = client.chat.completions.create(
                     model="openai/gpt-oss-20b:free",
@@ -135,24 +147,32 @@ Rules:
                         "X-Title": "AI Insight Dashboard",
                     },
                 )
-                generated_code = completion.choices[0].message.content
+                generated_code = completion.choices[0].message.content.strip()
             except Exception as e:
-                generated_code = f"# Error: {e}"
+                generated_code = f"# Error generating code: {e}"
 
-            # --- Show the code ---
+            # Clean any markdown or non-code text
+            for fence in ("```python", "```py", "```", "`"):
+                generated_code = generated_code.replace(fence, "")
+            generated_code = re.sub(r"^Python code.*", "", generated_code, flags=re.IGNORECASE)
+
             st.markdown("### 🧩 Generated Python Code:")
             st.code(generated_code, language="python")
 
-            # --- Try executing the code safely ---
+            # --- EXECUTE THE GENERATED CODE SAFELY ---
             if dataframe is not None:
                 try:
-                    df = dataframe.copy()  # Available to exec() code
-                    safe_locals = {"st": st, "pd": pd, "plt": plt, "df": df}
+                    df = dataframe.copy()
+                    safe_locals = {"st": st, "pd": pd, "plt": plt, "sns": sns, "df": df}
                     with contextlib.redirect_stdout(io.StringIO()):
                         exec(generated_code, {}, safe_locals)
+                except SyntaxError as e:
+                    st.error(f"⚠️ Syntax error in generated code: {e}")
+                    st.text_area("🔍 Cleaned Code", generated_code, height=200)
                 except Exception as e:
                     st.error(f"⚠️ Error executing generated code: {e}")
+                    st.text_area("🔍 Cleaned Code", generated_code, height=200)
             else:
-                st.info("⚠️ Please upload a CSV dataset to generate and run visualization code.")
+                st.info("⚠️ Please upload a CSV dataset first.")
 
     st.session_state.messages.append({"role": "assistant", "content": generated_code})
