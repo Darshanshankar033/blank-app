@@ -18,7 +18,7 @@ st.markdown(
     """
     <h1 style='text-align:center;'>📊 LLM-Powered Interactive BI Dashboard</h1>
     <p style='text-align:center;color:gray;'>
-    Conversational Analytics • AI BI • Exportable Reports
+    Conversational Analytics • AI-Generated BI Dashboard • Cloud Safe
     </p>
     <hr>
     """,
@@ -37,7 +37,12 @@ client = OpenAI(
 # SIDEBAR CONTROLS
 # =================================================
 st.sidebar.header("⚙️ Controls")
-uploaded_file = st.sidebar.file_uploader("Upload CSV / Excel", ["csv", "xlsx"])
+
+uploaded_file = st.sidebar.file_uploader(
+    "Upload CSV / Excel",
+    ["csv", "xlsx"]
+)
+
 auto_build_dashboard = st.sidebar.button("🤖 Auto-Build BI Dashboard")
 export_report = st.sidebar.button("📄 Export BI Report")
 
@@ -46,15 +51,19 @@ export_report = st.sidebar.button("📄 Export BI Report")
 # =================================================
 df = None
 if uploaded_file:
-    df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+    if uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
 
 # =================================================
-# UTILITY
+# DATA METADATA
 # =================================================
 def dataset_metadata(df):
     return f"""
 Rows: {df.shape[0]}
 Columns: {df.shape[1]}
+
 Column Types:
 {df.dtypes}
 
@@ -66,7 +75,23 @@ Summary Statistics:
 """
 
 # =================================================
-# AI BI DASHBOARD GENERATOR
+# 🔒 SAFETY: BLOCK FILE ACCESS IN AI CODE
+# =================================================
+def sanitize_generated_code(code: str) -> str:
+    forbidden = [
+        "read_csv",
+        "read_excel",
+        ".csv",
+        ".xlsx",
+        "open("
+    ]
+    for f in forbidden:
+        if f in code:
+            raise ValueError("Unsafe code detected: file access is not allowed.")
+    return code
+
+# =================================================
+# AI BI DASHBOARD GENERATOR (FIXED)
 # =================================================
 def generate_bi_dashboard_code(df):
     schema = {
@@ -81,57 +106,32 @@ You are a senior BI dashboard architect.
 Dataset schema:
 {schema}
 
+STRICT RULES (MUST FOLLOW):
+- Dataset is already loaded as pandas DataFrame `df`
+- DO NOT read files
+- DO NOT use pd.read_csv or pd.read_excel
+- DO NOT reference any filenames
+- ONLY operate on `df`
+
+TASK:
 Generate Streamlit Python code that:
-- Creates KPI metrics
-- Generates 2–4 charts
-- Uses st.columns()
-- Uses matplotlib or seaborn
-- Uses DataFrame df
-- Ends charts with st.pyplot(plt.gcf())
-- Output ONLY executable Python code
+1. Displays 3–5 KPI metrics
+2. Creates 2–4 meaningful charts
+3. Uses st.columns() for layout
+4. Uses matplotlib or seaborn
+5. Ends each chart with st.pyplot(plt.gcf())
+6. Outputs ONLY executable Python code
 """
 
-    r = client.chat.completions.create(
+    response = client.chat.completions.create(
         model="openai/gpt-oss-20b:free",
         messages=[{"role": "user", "content": prompt}],
     )
 
-    code = r.choices[0].message.content
-    return code.replace("```python", "").replace("```", "")
-
-# =================================================
-# LANGCHAIN-STYLE AGENTS
-# =================================================
-def planner_agent(query):
-    prompt = f"""
-Classify the request into one category:
-CHAT, VISUALIZATION, EXPORT
-
-Request:
-{query}
-
-Return only the category name.
-"""
-    r = client.chat.completions.create(
-        model="openai/gpt-oss-20b:free",
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return r.choices[0].message.content.strip()
-
-def coder_agent(task):
-    prompt = f"""
-Generate ONLY Python code using df to:
-{task}
-
-Rules:
-- Use matplotlib or seaborn
-- End with st.pyplot(plt.gcf())
-"""
-    r = client.chat.completions.create(
-        model="openai/gpt-oss-20b:free",
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return r.choices[0].message.content.replace("```python", "").replace("```", "")
+    code = response.choices[0].message.content.strip()
+    for fence in ("```python", "```", "`"):
+        code = code.replace(fence, "")
+    return code
 
 # =================================================
 # MAIN APP
@@ -145,56 +145,71 @@ if df is not None:
     c2.metric("Columns", df.shape[1])
     c3.metric("Missing Values", int(df.isnull().sum().sum()))
 
-    # ---------------- DATA ----------------
+    # ---------------- DATA PREVIEW ----------------
     with st.expander("🔍 Dataset Preview"):
         st.dataframe(df, use_container_width=True)
 
-    # ---------------- INSIGHTS ----------------
+    # ---------------- AI INSIGHTS ----------------
     st.subheader("🧠 AI Insights")
-    insight_prompt = f"Provide insights from this dataset:\n{dataset_metadata(df)}"
-    insight_resp = client.chat.completions.create(
+    insight_prompt = f"Provide insights for this dataset:\n{dataset_metadata(df)}"
+    insights = client.chat.completions.create(
         model="openai/gpt-oss-20b:free",
         messages=[{"role": "user", "content": insight_prompt}],
-    )
-    insights = insight_resp.choices[0].message.content
+    ).choices[0].message.content
     st.markdown(insights)
 
-    # ---------------- AI DASHBOARD ----------------
+    # ---------------- AI BI DASHBOARD ----------------
     if auto_build_dashboard:
         st.subheader("🤖 AI-Generated BI Dashboard")
+
         if "bi_code" not in st.session_state:
-            st.session_state.bi_code = generate_bi_dashboard_code(df)
+            with st.spinner("AI is building the dashboard..."):
+                st.session_state.bi_code = generate_bi_dashboard_code(df)
 
         try:
+            safe_code = sanitize_generated_code(st.session_state.bi_code)
             exec(
-                st.session_state.bi_code,
+                safe_code,
                 {},
                 {"st": st, "pd": pd, "plt": plt, "sns": sns, "df": df.copy()}
             )
         except Exception as e:
-            st.error(f"Dashboard error: {e}")
+            st.error("Dashboard generation failed due to unsafe AI code.")
+            st.exception(e)
 
     # ---------------- CHAT ----------------
     st.subheader("💬 Conversational Analytics")
     user_query = st.chat_input("Ask a question or request a chart")
 
     if user_query:
-        intent = planner_agent(user_query)
+        if any(k in user_query.lower() for k in ["plot", "chart", "graph"]):
+            code_prompt = f"""
+Generate ONLY Python code using DataFrame `df` to:
+{user_query}
 
-        if intent == "VISUALIZATION":
-            code = coder_agent(user_query)
+Rules:
+- Use matplotlib or seaborn
+- End with st.pyplot(plt.gcf())
+"""
+            code = client.chat.completions.create(
+                model="openai/gpt-oss-20b:free",
+                messages=[{"role": "user", "content": code_prompt}],
+            ).choices[0].message.content
+
+            code = code.replace("```python", "").replace("```", "")
             st.code(code, language="python")
             exec(code, {}, {"st": st, "df": df, "plt": plt, "sns": sns})
+
         else:
-            resp = client.chat.completions.create(
+            reply = client.chat.completions.create(
                 model="openai/gpt-oss-20b:free",
                 messages=[{"role": "user", "content": user_query}],
-            )
-            st.markdown(resp.choices[0].message.content)
+            ).choices[0].message.content
+            st.markdown(reply)
 
     # ---------------- EXPORT REPORT ----------------
     if export_report:
-        report_text = f"""
+        report = f"""
 LLM-Powered BI Report
 
 Rows: {df.shape[0]}
@@ -205,15 +220,15 @@ INSIGHTS:
 """
         st.download_button(
             "📥 Download BI Report (TXT)",
-            report_text,
+            report,
             file_name="BI_Report.txt"
         )
 
         st.download_button(
             "📥 Download Dataset Snapshot (CSV)",
             df.to_csv(index=False),
-            file_name="Filtered_Data.csv"
+            file_name="Dataset.csv"
         )
 
 else:
-    st.info("⬅️ Upload a dataset to begin.")
+    st.info("⬅️ Upload a dataset to start.")
