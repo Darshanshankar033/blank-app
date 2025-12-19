@@ -4,8 +4,6 @@ from openai import OpenAI
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
-from reportlab.platypus import SimpleDocTemplate, Paragraph
-from reportlab.lib.styles import getSampleStyleSheet
 
 # =================================================
 # PAGE CONFIG
@@ -41,7 +39,7 @@ client = OpenAI(
 st.sidebar.header("⚙️ Controls")
 uploaded_file = st.sidebar.file_uploader("Upload CSV / Excel", ["csv", "xlsx"])
 auto_build_dashboard = st.sidebar.button("🤖 Auto-Build BI Dashboard")
-export_pdf = st.sidebar.button("📄 Export BI Report (PDF)")
+export_report = st.sidebar.button("📄 Export BI Report")
 
 # =================================================
 # LOAD DATA
@@ -51,7 +49,7 @@ if uploaded_file:
     df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
 
 # =================================================
-# UTILITY FUNCTIONS
+# UTILITY
 # =================================================
 def dataset_metadata(df):
     return f"""
@@ -59,14 +57,16 @@ Rows: {df.shape[0]}
 Columns: {df.shape[1]}
 Column Types:
 {df.dtypes}
+
 Missing Values:
 {df.isnull().sum()}
+
 Summary Statistics:
 {df.describe(include='all')}
 """
 
 # =================================================
-# AI BI DASHBOARD GENERATOR (DEFINED ✔️)
+# AI BI DASHBOARD GENERATOR
 # =================================================
 def generate_bi_dashboard_code(df):
     schema = {
@@ -81,34 +81,30 @@ You are a senior BI dashboard architect.
 Dataset schema:
 {schema}
 
-STRICT RULES:
-- DataFrame is already available as `df`
-- DO NOT read files
-- DO NOT create dummy data
-- Use st.columns() for layout
-- Show 3–5 KPIs
-- Create 2–4 meaningful charts
-- Use matplotlib or seaborn
-- End each chart with st.pyplot(plt.gcf())
+Generate Streamlit Python code that:
+- Creates KPI metrics
+- Generates 2–4 charts
+- Uses st.columns()
+- Uses matplotlib or seaborn
+- Uses DataFrame df
+- Ends charts with st.pyplot(plt.gcf())
 - Output ONLY executable Python code
 """
 
-    response = client.chat.completions.create(
+    r = client.chat.completions.create(
         model="openai/gpt-oss-20b:free",
         messages=[{"role": "user", "content": prompt}],
     )
 
-    code = response.choices[0].message.content.strip()
-    for fence in ("```python", "```", "`"):
-        code = code.replace(fence, "")
-    return code
+    code = r.choices[0].message.content
+    return code.replace("```python", "").replace("```", "")
 
 # =================================================
 # LANGCHAIN-STYLE AGENTS
 # =================================================
 def planner_agent(query):
     prompt = f"""
-Classify the user request into one category:
+Classify the request into one category:
 CHAT, VISUALIZATION, EXPORT
 
 Request:
@@ -118,32 +114,24 @@ Return only the category name.
 """
     r = client.chat.completions.create(
         model="openai/gpt-oss-20b:free",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
     )
     return r.choices[0].message.content.strip()
 
-def coder_agent(task, df):
+def coder_agent(task):
     prompt = f"""
-Generate ONLY executable Python code using DataFrame `df` to:
+Generate ONLY Python code using df to:
 {task}
 
 Rules:
-- Use matplotlib / seaborn
+- Use matplotlib or seaborn
 - End with st.pyplot(plt.gcf())
 """
     r = client.chat.completions.create(
         model="openai/gpt-oss-20b:free",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
     )
-    code = r.choices[0].message.content
-    return code.replace("```python", "").replace("```", "")
-
-def explainer_agent(context):
-    r = client.chat.completions.create(
-        model="openai/gpt-oss-20b:free",
-        messages=[{"role": "user", "content": context}]
-    )
-    return r.choices[0].message.content
+    return r.choices[0].message.content.replace("```python", "").replace("```", "")
 
 # =================================================
 # MAIN APP
@@ -157,17 +145,25 @@ if df is not None:
     c2.metric("Columns", df.shape[1])
     c3.metric("Missing Values", int(df.isnull().sum().sum()))
 
-    # ---------------- DATA PREVIEW ----------------
+    # ---------------- DATA ----------------
     with st.expander("🔍 Dataset Preview"):
         st.dataframe(df, use_container_width=True)
 
-    # ---------------- AUTO BI DASHBOARD ----------------
+    # ---------------- INSIGHTS ----------------
+    st.subheader("🧠 AI Insights")
+    insight_prompt = f"Provide insights from this dataset:\n{dataset_metadata(df)}"
+    insight_resp = client.chat.completions.create(
+        model="openai/gpt-oss-20b:free",
+        messages=[{"role": "user", "content": insight_prompt}],
+    )
+    insights = insight_resp.choices[0].message.content
+    st.markdown(insights)
+
+    # ---------------- AI DASHBOARD ----------------
     if auto_build_dashboard:
         st.subheader("🤖 AI-Generated BI Dashboard")
-
         if "bi_code" not in st.session_state:
-            with st.spinner("AI is building dashboard..."):
-                st.session_state.bi_code = generate_bi_dashboard_code(df)
+            st.session_state.bi_code = generate_bi_dashboard_code(df)
 
         try:
             exec(
@@ -176,47 +172,47 @@ if df is not None:
                 {"st": st, "pd": pd, "plt": plt, "sns": sns, "df": df.copy()}
             )
         except Exception as e:
-            st.error(f"Dashboard execution error: {e}")
+            st.error(f"Dashboard error: {e}")
 
     # ---------------- CHAT ----------------
     st.subheader("💬 Conversational Analytics")
-    user_query = st.chat_input("Ask a question, request a chart, or export report")
+    user_query = st.chat_input("Ask a question or request a chart")
 
     if user_query:
         intent = planner_agent(user_query)
 
         if intent == "VISUALIZATION":
-            code = coder_agent(user_query, df)
+            code = coder_agent(user_query)
             st.code(code, language="python")
             exec(code, {}, {"st": st, "df": df, "plt": plt, "sns": sns})
-
-        elif intent == "EXPORT":
-            st.info("Use the Export PDF button in the sidebar.")
-
         else:
-            st.markdown(explainer_agent(user_query))
+            resp = client.chat.completions.create(
+                model="openai/gpt-oss-20b:free",
+                messages=[{"role": "user", "content": user_query}],
+            )
+            st.markdown(resp.choices[0].message.content)
 
-    # ---------------- EXPORT PDF ----------------
-    if export_pdf:
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer)
-        styles = getSampleStyleSheet()
-        content = []
+    # ---------------- EXPORT REPORT ----------------
+    if export_report:
+        report_text = f"""
+LLM-Powered BI Report
 
-        content.append(Paragraph("<b>LLM-Powered BI Report</b>", styles["Title"]))
-        content.append(Paragraph(f"Rows: {df.shape[0]}", styles["Normal"]))
-        content.append(Paragraph(f"Columns: {', '.join(df.columns)}", styles["Normal"]))
-        content.append(Paragraph("<br/><b>Dataset Summary</b><br/>", styles["Heading2"]))
-        content.append(Paragraph(dataset_metadata(df).replace("\n", "<br/>"), styles["Normal"]))
+Rows: {df.shape[0]}
+Columns: {df.shape[1]}
 
-        doc.build(content)
-        buffer.seek(0)
+INSIGHTS:
+{insights}
+"""
+        st.download_button(
+            "📥 Download BI Report (TXT)",
+            report_text,
+            file_name="BI_Report.txt"
+        )
 
         st.download_button(
-            "📥 Download BI Report (PDF)",
-            buffer,
-            file_name="BI_Report.pdf",
-            mime="application/pdf"
+            "📥 Download Dataset Snapshot (CSV)",
+            df.to_csv(index=False),
+            file_name="Filtered_Data.csv"
         )
 
 else:
