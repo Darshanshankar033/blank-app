@@ -97,7 +97,7 @@ Summary Statistics:
 """
 
 # =================================================
-# AI SLICER GENERATOR
+# AI SLICER GENERATOR (FIXED – NO FILE I/O)
 # =================================================
 def generate_slicer_code(df):
     schema = {
@@ -111,13 +111,23 @@ You are a senior BI dashboard developer.
 Dataset schema:
 {schema}
 
+STRICT RULES:
+- Dataset is already loaded as pandas DataFrame `df`
+- DO NOT read files (no pd.read_csv / pd.read_excel)
+- DO NOT reference file paths
+- ONLY use `df` in memory
+
+TASK:
 Generate Streamlit Python code that:
-- Creates Power BI–style slicers
-- Uses multiselect for categorical columns
-- Uses slider for numeric columns
-- Uses date_input for datetime columns
-- Produces a DataFrame called filtered_df
-- Output ONLY executable Python code
+1. Creates Power BI–style slicers
+2. Uses:
+   - st.multiselect for categorical columns
+   - st.slider for numeric columns
+   - st.date_input for datetime columns
+3. Applies filters to `df`
+4. Creates `filtered_df`
+5. Does NOT modify `df`
+6. Output ONLY executable Python code
 """
 
     response = client.chat.completions.create(
@@ -125,7 +135,7 @@ Generate Streamlit Python code that:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    code = response.choices[0].message.content
+    code = response.choices[0].message.content.strip()
     for fence in ("```python", "```", "`"):
         code = code.replace(fence, "")
     return code
@@ -150,10 +160,10 @@ Generate Streamlit Python code that:
 - Builds a professional BI dashboard
 - Shows KPI metrics
 - Shows 2–4 charts
-- Uses st.columns() layout
+- Uses st.columns layout
 - Uses matplotlib / seaborn
-- Uses filtered_df
-- Ends charts with st.pyplot(plt.gcf())
+- Uses `filtered_df`
+- Ends each chart with st.pyplot(plt.gcf())
 - Output ONLY executable Python code
 """
 
@@ -162,7 +172,7 @@ Generate Streamlit Python code that:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    code = response.choices[0].message.content
+    code = response.choices[0].message.content.strip()
     for fence in ("```python", "```", "`"):
         code = code.replace(fence, "")
     return code
@@ -176,7 +186,8 @@ if df is not None:
     st.subheader("🎛️ Interactive Filters (AI-Generated)")
 
     if "slicer_code" not in st.session_state:
-        st.session_state.slicer_code = generate_slicer_code(df)
+        with st.spinner("Generating slicers..."):
+            st.session_state.slicer_code = generate_slicer_code(df)
 
     try:
         env = {"st": st, "pd": pd, "df": df.copy()}
@@ -201,23 +212,22 @@ if df is not None:
     # ---------------- AUTO INSIGHTS ----------------
     st.subheader("🧠 Automated Insights")
     with st.spinner("Generating insights..."):
-        prompt = f"""
-You are a senior data analyst.
-
-Provide insights from this dataset:
-{dataset_metadata(filtered_df)}
-"""
         resp = client.chat.completions.create(
             model="openai/gpt-oss-20b:free",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{
+                "role": "user",
+                "content": f"Provide insights for this dataset:\n{dataset_metadata(filtered_df)}"
+            }],
         )
         st.markdown(resp.choices[0].message.content)
 
     # ---------------- AI BI DASHBOARD ----------------
     if auto_build_dashboard:
         st.subheader("🤖 AI-Built BI Dashboard")
+
         if "bi_code" not in st.session_state:
-            st.session_state.bi_code = generate_bi_dashboard_code(filtered_df)
+            with st.spinner("Designing dashboard..."):
+                st.session_state.bi_code = generate_bi_dashboard_code(filtered_df)
 
         try:
             exec_env = {
@@ -245,15 +255,13 @@ Provide insights from this dataset:
 
     if user_prompt:
         st.session_state.chat_history.append({"role": "user", "content": user_prompt})
-        with st.chat_message("user"):
-            st.markdown(user_prompt)
 
         viz_words = ["plot", "chart", "graph", "bar", "line", "scatter", "heatmap"]
         run_code = (mode == "🧠 Code") or (mode == "⚙️ Auto" and any(w in user_prompt.lower() for w in viz_words))
 
         if run_code:
             code_prompt = f"""
-Generate ONLY Python code using filtered_df to:
+Generate ONLY Python code using `filtered_df` to:
 {user_prompt}
 End with st.pyplot(plt.gcf())
 """
@@ -265,15 +273,27 @@ End with st.pyplot(plt.gcf())
             for fence in ("```python", "```", "`"):
                 code = code.replace(fence, "")
             st.code(code, language="python")
+
             try:
-                exec(code, {}, {"st": st, "pd": pd, "plt": plt, "sns": sns, "filtered_df": filtered_df.copy()})
+                exec(code, {}, {
+                    "st": st,
+                    "pd": pd,
+                    "plt": plt,
+                    "sns": sns,
+                    "filtered_df": filtered_df.copy()
+                })
             except Exception as e:
                 st.error(e)
+
             st.session_state.chat_history.append({"role": "assistant", "content": code})
+
         else:
             resp = client.chat.completions.create(
                 model="openai/gpt-oss-20b:free",
-                messages=[{"role": "user", "content": dataset_metadata(filtered_df) + user_prompt}],
+                messages=[{
+                    "role": "user",
+                    "content": dataset_metadata(filtered_df) + user_prompt
+                }],
             )
             answer = resp.choices[0].message.content
             st.markdown(answer)
