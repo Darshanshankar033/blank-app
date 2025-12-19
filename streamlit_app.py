@@ -19,7 +19,7 @@ st.markdown(
     """
     <h1 style='text-align:center;'>📊 LLM-Powered Interactive Data Analysis & Visualization</h1>
     <p style='text-align:center;color:gray;'>
-    Conversational Analytics • AI-Generated BI Dashboard • Power BI–Style Filters
+    Conversational Analytics • AI-Generated BI Dashboard • Simplified Filters
     </p>
     <hr>
     """,
@@ -35,7 +35,7 @@ client = OpenAI(
 )
 
 # =================================================
-# SIDEBAR CONTROLS
+# SIDEBAR
 # =================================================
 st.sidebar.header("⚙️ Controls")
 
@@ -97,137 +97,25 @@ Summary Statistics:
 """
 
 # =================================================
-# AI SLICER GENERATOR (FIXED – NO FILE I/O)
-# =================================================
-def generate_slicer_code(df):
-    schema = {
-        "columns": df.columns.tolist(),
-        "dtypes": df.dtypes.astype(str).to_dict()
-    }
-
-    prompt = f"""
-You are a senior BI dashboard developer.
-
-Dataset schema:
-{schema}
-
-STRICT RULES:
-- Dataset is already loaded as pandas DataFrame `df`
-- DO NOT read files (no pd.read_csv / pd.read_excel)
-- DO NOT reference file paths
-- ONLY use `df` in memory
-
-TASK:
-Generate Streamlit Python code that:
-1. Creates Power BI–style slicers
-2. Uses:
-   - st.multiselect for categorical columns
-   - st.slider for numeric columns
-   - st.date_input for datetime columns
-3. Applies filters to `df`
-4. Creates `filtered_df`
-5. Does NOT modify `df`
-6. Output ONLY executable Python code
-"""
-
-    response = client.chat.completions.create(
-        model="openai/gpt-oss-20b:free",
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    code = response.choices[0].message.content.strip()
-    for fence in ("```python", "```", "`"):
-        code = code.replace(fence, "")
-    return code
-
-# =================================================
-# AI BI DASHBOARD GENERATOR
-# =================================================
-def generate_bi_dashboard_code(filtered_df):
-    schema = {
-        "rows": filtered_df.shape[0],
-        "columns": filtered_df.columns.tolist(),
-        "dtypes": filtered_df.dtypes.astype(str).to_dict()
-    }
-
-    prompt = f"""
-You are a senior BI dashboard architect.
-
-Dataset schema:
-{schema}
-
-Generate Streamlit Python code that:
-- Builds a professional BI dashboard
-- Shows KPI metrics
-- Shows 2–4 charts
-- Uses st.columns layout
-- Uses matplotlib / seaborn
-- Uses `filtered_df`
-- Ends each chart with st.pyplot(plt.gcf())
-- Output ONLY executable Python code
-"""
-
-    response = client.chat.completions.create(
-        model="openai/gpt-oss-20b:free",
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    code = response.choices[0].message.content.strip()
-    for fence in ("```python", "```", "`"):
-        code = code.replace(fence, "")
-    return code
-
-# =================================================
-# MAIN DASHBOARD
+# MAIN DASHBOARD (NO FILTERS YET)
 # =================================================
 if df is not None:
 
-    # ---------------- AI SLICERS ----------------
-    st.subheader("🎛️ Interactive Filters (AI-Generated)")
-
-    if "slicer_code" not in st.session_state:
-        with st.spinner("Generating slicers..."):
-            st.session_state.slicer_code = generate_slicer_code(df)
-
-    try:
-        env = {"st": st, "pd": pd, "df": df.copy()}
-        exec(st.session_state.slicer_code, {}, env)
-        filtered_df = env.get("filtered_df", df)
-    except Exception as e:
-        st.error(f"Slicer error: {e}")
-        filtered_df = df
-
     # ---------------- KPIs ----------------
-    st.subheader("📌 Dataset Overview")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Rows", filtered_df.shape[0])
-    c2.metric("Columns", filtered_df.shape[1])
-    c3.metric("Numeric Columns", len(filtered_df.select_dtypes(include="number").columns))
-    c4.metric("Missing Values", int(filtered_df.isnull().sum().sum()))
+    st.subheader("📌 Dataset Overview (Unfiltered)")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Rows", df.shape[0])
+    k2.metric("Columns", df.shape[1])
+    k3.metric("Numeric Columns", len(df.select_dtypes(include="number").columns))
+    k4.metric("Missing Values", int(df.isnull().sum().sum()))
 
-    # ---------------- TABLE ----------------
-    with st.expander("🔍 View Filtered Dataset"):
-        st.dataframe(filtered_df, use_container_width=True)
-
-    # ---------------- AUTO INSIGHTS ----------------
-    st.subheader("🧠 Automated Insights")
-    with st.spinner("Generating insights..."):
-        resp = client.chat.completions.create(
-            model="openai/gpt-oss-20b:free",
-            messages=[{
-                "role": "user",
-                "content": f"Provide insights for this dataset:\n{dataset_metadata(filtered_df)}"
-            }],
-        )
-        st.markdown(resp.choices[0].message.content)
-
-    # ---------------- AI BI DASHBOARD ----------------
+    # ---------------- AI DASHBOARD ----------------
     if auto_build_dashboard:
         st.subheader("🤖 AI-Built BI Dashboard")
 
         if "bi_code" not in st.session_state:
-            with st.spinner("Designing dashboard..."):
-                st.session_state.bi_code = generate_bi_dashboard_code(filtered_df)
+            with st.spinner("AI is designing dashboard..."):
+                st.session_state.bi_code = generate_bi_dashboard_code(df)
 
         try:
             exec_env = {
@@ -235,11 +123,23 @@ if df is not None:
                 "pd": pd,
                 "plt": plt,
                 "sns": sns,
-                "filtered_df": filtered_df.copy(),
+                "filtered_df": df.copy(),
             }
             exec(st.session_state.bi_code, {}, exec_env)
         except Exception as e:
             st.error(f"Dashboard error: {e}")
+
+    # ---------------- INSIGHTS ----------------
+    st.subheader("🧠 Automated Insights")
+    with st.spinner("Generating insights..."):
+        resp = client.chat.completions.create(
+            model="openai/gpt-oss-20b:free",
+            messages=[{
+                "role": "user",
+                "content": f"Provide insights for this dataset:\n{dataset_metadata(df)}"
+            }],
+        )
+        st.markdown(resp.choices[0].message.content)
 
     # ---------------- CHAT ----------------
     if "chat_history" not in st.session_state:
@@ -261,7 +161,7 @@ if df is not None:
 
         if run_code:
             code_prompt = f"""
-Generate ONLY Python code using `filtered_df` to:
+Generate ONLY Python code using df to:
 {user_prompt}
 End with st.pyplot(plt.gcf())
 """
@@ -273,31 +173,53 @@ End with st.pyplot(plt.gcf())
             for fence in ("```python", "```", "`"):
                 code = code.replace(fence, "")
             st.code(code, language="python")
-
-            try:
-                exec(code, {}, {
-                    "st": st,
-                    "pd": pd,
-                    "plt": plt,
-                    "sns": sns,
-                    "filtered_df": filtered_df.copy()
-                })
-            except Exception as e:
-                st.error(e)
-
+            exec(code, {}, {"st": st, "pd": pd, "plt": plt, "sns": sns, "df": df.copy()})
             st.session_state.chat_history.append({"role": "assistant", "content": code})
-
         else:
             resp = client.chat.completions.create(
                 model="openai/gpt-oss-20b:free",
-                messages=[{
-                    "role": "user",
-                    "content": dataset_metadata(filtered_df) + user_prompt
-                }],
+                messages=[{"role": "user", "content": dataset_metadata(df) + user_prompt}],
             )
-            answer = resp.choices[0].message.content
-            st.markdown(answer)
-            st.session_state.chat_history.append({"role": "assistant", "content": answer})
+            st.markdown(resp.choices[0].message.content)
+
+    # =================================================
+    # 🎛️ SIMPLIFIED SLICERS (AT THE END)
+    # =================================================
+    st.markdown("---")
+    st.subheader("🎛️ Optional Filters (Simplified)")
+
+    filtered_df = df.copy()
+
+    # Categorical slicers (limited)
+    cat_cols = [
+        c for c in df.select_dtypes(include="object").columns
+        if df[c].nunique() <= 20
+    ]
+
+    for col in cat_cols[:3]:  # limit slicers
+        selected = st.multiselect(
+            f"Filter {col}",
+            options=df[col].unique(),
+            default=df[col].unique()
+        )
+        filtered_df = filtered_df[filtered_df[col].isin(selected)]
+
+    # Numeric slicers
+    num_cols = df.select_dtypes(include="number").columns.tolist()
+    for col in num_cols[:2]:
+        min_val, max_val = float(df[col].min()), float(df[col].max())
+        selected_range = st.slider(
+            f"Filter {col}",
+            min_value=min_val,
+            max_value=max_val,
+            value=(min_val, max_val)
+        )
+        filtered_df = filtered_df[
+            (filtered_df[col] >= selected_range[0]) &
+            (filtered_df[col] <= selected_range[1])
+        ]
+
+    st.caption(f"Filtered rows: {filtered_df.shape[0]}")
 
 else:
     st.info("⬅️ Upload a dataset to start.")
