@@ -32,7 +32,7 @@ st.markdown(
 # =================================================
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key="YOUR_OPENROUTER_API_KEY"
+    api_key="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"
 )
 
 # =================================================
@@ -135,7 +135,7 @@ Dataset Metadata:
 {meta}
 """
         insight_response = client.chat.completions.create(
-            model="mistralai/mixtral-8x7b",
+            model="openai/gpt-oss-20b:free",
             messages=[{"role": "user", "content": insight_prompt}],
             extra_headers={
                 "HTTP-Referer": "http://localhost:8501",
@@ -199,7 +199,7 @@ Rules:
             with st.chat_message("assistant"):
                 with st.spinner("Generating and executing visualization code..."):
                     response = client.chat.completions.create(
-                        model="mistralai/mixtral-8x7b",
+                        model="openai/gpt-oss-20b:free",
                         messages=[{"role": "user", "content": code_prompt}],
                         extra_headers={
                             "HTTP-Referer": "http://localhost:8501",
@@ -248,7 +248,7 @@ User Question:
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     reply = client.chat.completions.create(
-                        model="mistralai/mixtral-8x7b",
+                        model="openai/gpt-oss-20b:free",
                         messages=[{"role": "user", "content": chat_prompt}],
                         extra_headers={
                             "HTTP-Referer": "http://localhost:8501",
