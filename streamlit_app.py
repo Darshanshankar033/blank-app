@@ -1,272 +1,211 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from openai import OpenAI
-import matplotlib.pyplot as plt
-import seaborn as sns
 
-# =================================================
-# PAGE CONFIG
-# =================================================
+# ======================================================
+# CONFIG
+# ======================================================
 st.set_page_config(
-    page_title="LLM-Powered Interactive BI Dashboard",
-    page_icon="📊",
+    page_title="LLM-Powered Data Analysis Platform",
     layout="wide"
 )
 
-st.markdown(
-    """
-    <h1 style='text-align:center;'>📊 LLM-Powered Interactive BI Dashboard</h1>
-    <p style='text-align:center;color:gray;'>
-    Universal Dataset Support • AI Governance • Cloud Safe
-    </p>
-    <hr>
-    """,
-    unsafe_allow_html=True
-)
-
-# =================================================
-# OPENROUTER CLIENT
-# =================================================
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key="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"
+    api_key=st.secrets["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"]
 )
 
-MODEL_NAME = "openai/gpt-oss-20b:free"
+MODEL = "openai/gpt-oss-20b:free"
 
-# =================================================
-# SIDEBAR CONTROLS
-# =================================================
-st.sidebar.header("⚙️ Controls")
-
-uploaded_file = st.sidebar.file_uploader(
-    "Upload CSV / Excel Dataset",
-    ["csv", "xlsx"]
-)
-
-auto_build_dashboard = st.sidebar.button("🤖 Auto-Build BI Dashboard")
-export_report = st.sidebar.button("📄 Export BI Report")
-
-# =================================================
-# LOAD DATA (SINGLE SOURCE OF TRUTH)
-# =================================================
-df = None
-if uploaded_file:
-    try:
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
-    except Exception as e:
-        st.error("Failed to load dataset.")
-        st.exception(e)
-
-# =================================================
-# DATASET METADATA (SAFE FOR ALL TYPES)
-# =================================================
-def dataset_metadata(df):
-    return {
-        "rows": int(df.shape[0]),
-        "columns": list(df.columns),
-        "dtypes": {c: str(df[c].dtype) for c in df.columns},
-        "missing_values": df.isnull().sum().to_dict()
-    }
-
-# =================================================
-# 🔒 SANITIZER — BLOCK ALL UNSAFE OPERATIONS
-# =================================================
-def sanitize_generated_code(code: str) -> str:
-    forbidden_patterns = [
-        # File I/O
-        "read_csv", "read_excel", ".csv", ".xlsx", "open(",
-
-        # Aggregation / derivation
-        "groupby", "value_counts", "reset_index", "agg(",
-        "sum(", "mean(", "median(", "count(",
-
-        # Date parsing / transformation
-        "to_datetime", "strftime", "strptime",
-        "dayfirst", "format=", "errors=",
-
-        # Column creation / modification
-        "df[", ".assign(", ".apply(", ".map(",
-    ]
-
-    for pattern in forbidden_patterns:
-        if pattern in code:
-            raise ValueError(f"❌ Forbidden operation detected: {pattern}")
-
-    return code
-
-# =================================================
-# AI BI DASHBOARD GENERATOR (UNIVERSAL & STRICT)
-# =================================================
-def generate_bi_dashboard_code(df):
-    meta = dataset_metadata(df)
-
-    prompt = f"""
-You are a senior BI dashboard architect.
-
-DATASET METADATA:
-{meta}
-
-STRICT GOVERNANCE RULES (MUST FOLLOW):
-- Use ONLY the existing DataFrame `df`
-- DO NOT read files
-- DO NOT create, derive, or modify columns
-- DO NOT aggregate data
-- DO NOT parse or convert dates
-- Treat all non-numeric columns as categorical strings
-- DO NOT assume column meaning or semantics
-- DO NOT use groupby, value_counts, agg, to_datetime
-
-ALLOWED VISUALS ONLY:
-- Histogram of ONE numeric column
-- Boxplot of ONE numeric column
-- Scatter plot between TWO numeric columns
-- Simple bar chart using ONE categorical column AS-IS (no aggregation)
-
-TASK:
-Generate Streamlit Python code that:
-1. Displays 3–4 KPI metrics using ONLY:
-   - df.shape
-   - df.isnull()
-2. Creates 2–3 allowed charts
-3. Uses st.columns() for layout
-4. Uses matplotlib or seaborn
-5. Ends each chart with st.pyplot(plt.gcf())
-6. Outputs ONLY executable Python code (no markdown, no explanation)
-"""
-
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    code = response.choices[0].message.content.strip()
-    for fence in ("```python", "```", "`"):
-        code = code.replace(fence, "")
-    return code
-
-# =================================================
-# MAIN APPLICATION
-# =================================================
-if df is not None:
-
-    # ---------------- KPI SUMMARY ----------------
-    st.subheader("📌 Dataset KPI Summary")
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Rows", df.shape[0])
-    k2.metric("Columns", df.shape[1])
-    k3.metric("Numeric Columns", len(df.select_dtypes(include="number").columns))
-    k4.metric("Missing Values", int(df.isnull().sum().sum()))
-
-    # ---------------- DATA PREVIEW ----------------
-    with st.expander("🔍 Dataset Preview"):
-        st.dataframe(df, use_container_width=True)
-
-    # ---------------- AI INSIGHTS (METADATA-ONLY) ----------------
-    st.subheader("🧠 AI Insights")
-
-    insight_prompt = f"""
-Analyze the dataset using ONLY this metadata.
-Do NOT assume column meaning.
-
-METADATA:
-{dataset_metadata(df)}
-
-Provide high-level observations about:
-- Data size
-- Data types
-- Missing values
-"""
-
-    insights = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[{"role": "user", "content": insight_prompt}],
+# ======================================================
+# HELPERS
+# ======================================================
+def llm(prompt):
+    return client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}]
     ).choices[0].message.content
 
-    st.markdown(insights)
+def dataset_profile(df):
+    return {
+        "rows": df.shape[0],
+        "columns": list(df.columns),
+        "dtypes": df.dtypes.astype(str).to_dict(),
+        "missing": df.isnull().sum().to_dict()
+    }
 
-    # ---------------- AI-GENERATED BI DASHBOARD ----------------
-    if auto_build_dashboard:
-        st.subheader("🤖 AI-Generated BI Dashboard")
+# ======================================================
+# SESSION STATE
+# ======================================================
+if "chat_memory" not in st.session_state:
+    st.session_state.chat_memory = []
 
-        if "bi_code" not in st.session_state:
-            with st.spinner("Safely generating dashboard..."):
-                st.session_state.bi_code = generate_bi_dashboard_code(df)
+if "dashboard_code" not in st.session_state:
+    st.session_state.dashboard_code = None
 
-        try:
-            safe_code = sanitize_generated_code(st.session_state.bi_code)
-            exec(
-                safe_code,
-                {},
-                {"st": st, "pd": pd, "plt": plt, "sns": sns, "df": df.copy()}
-            )
-        except Exception as e:
-            st.error("Dashboard generation blocked due to governance rules.")
-            st.exception(e)
+# ======================================================
+# SIDEBAR
+# ======================================================
+st.sidebar.title("⚙️ Controls")
+uploaded_file = st.sidebar.file_uploader("Upload CSV / Excel", ["csv", "xlsx"])
+send_email = st.sidebar.button("📧 Send Summary & Dashboard (Agent)")
 
-    # ---------------- CONVERSATIONAL ANALYTICS ----------------
-    st.subheader("💬 Conversational Analytics")
+# ======================================================
+# LOAD DATA
+# ======================================================
+df = None
+if uploaded_file:
+    df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
 
-    user_query = st.chat_input("Ask about the dataset or request a simple chart")
+# ======================================================
+# UI LAYOUT
+# ======================================================
+st.title("🤖 LLM-Powered Data Analysis Platform")
 
-    if user_query:
-        if any(k in user_query.lower() for k in ["plot", "chart", "graph"]):
-            code_prompt = f"""
-Generate ONLY Python code using DataFrame `df` to:
-{user_query}
+summary_tab, dashboard_tab, chat_tab = st.tabs(
+    ["📌 Dataset Summary", "📊 Interactive Dashboard", "💬 Chat with Data"]
+)
+
+# ======================================================
+# 1️⃣ SUMMARY SECTION
+# ======================================================
+if df is not None:
+    with summary_tab:
+        st.subheader("📌 Dataset Summary")
+
+        profile = dataset_profile(df)
+
+        # ---- Prompt 1: Dataset Understanding
+        understanding_prompt = f"""
+You are a data analyst.
+Understand the dataset structure below (no assumptions).
+
+{profile}
+"""
+        understanding = llm(understanding_prompt)
+
+        # ---- Prompt 2: Summary + Questions
+        summary_prompt = f"""
+Using the dataset understanding below, produce:
+1. A concise dataset summary
+2. 3 insightful questions a user might ask
+
+Dataset Understanding:
+{understanding}
+"""
+        summary_output = llm(summary_prompt)
+
+        st.markdown(summary_output)
+
+# ======================================================
+# 2️⃣ DASHBOARD SECTION
+# ======================================================
+if df is not None:
+    with dashboard_tab:
+        st.subheader("📊 AI-Generated Interactive Dashboard")
+
+        if st.button("🚀 Generate Dashboard") or st.session_state.dashboard_code:
+
+            if st.session_state.dashboard_code is None:
+
+                # ---- Prompt 3: EDA Planning
+                eda_prompt = f"""
+Given the dataset below, suggest EDA insights
+WITHOUT aggregations or feature engineering.
+
+{profile}
+"""
+                eda_plan = llm(eda_prompt)
+
+                # ---- Prompt 4: Dashboard Code Generator
+                dashboard_prompt = f"""
+You are a BI dashboard developer.
+
+Dataset profile:
+{profile}
+
+EDA plan:
+{eda_plan}
 
 RULES:
+- Use Plotly Express
+- Use DataFrame df
+- No new columns
 - No aggregation
-- No column creation
-- No data transformation
-- Use existing columns only
-- End with st.pyplot(plt.gcf())
+- No file access
+- Create KPI cards + 2–3 charts
+- Output ONLY Python code
+
+Example allowed:
+px.histogram, px.box, px.scatter, px.bar (raw)
 """
-            code = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[{"role": "user", "content": code_prompt}],
-            ).choices[0].message.content
 
-            code = sanitize_generated_code(
-                code.replace("```python", "").replace("```", "")
-            )
+                st.session_state.dashboard_code = llm(dashboard_prompt)
 
-            st.code(code, language="python")
-            exec(code, {}, {"st": st, "df": df, "plt": plt, "sns": sns})
+            # ---- Execute Dashboard Code
+            try:
+                exec(
+                    st.session_state.dashboard_code,
+                    {},
+                    {"st": st, "df": df, "px": px}
+                )
+            except Exception as e:
+                st.error("Dashboard generation failed.")
+                st.exception(e)
 
-        else:
-            reply = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[{"role": "user", "content": user_query}],
-            ).choices[0].message.content
-            st.markdown(reply)
+# ======================================================
+# 3️⃣ CHAT SECTION
+# ======================================================
+if df is not None:
+    with chat_tab:
+        st.subheader("💬 Conversational Analytics")
 
-    # ---------------- EXPORT ----------------
-    if export_report:
-        report = f"""
-LLM-Powered BI Report
+        for msg in st.session_state.chat_memory:
+            st.chat_message(msg["role"]).markdown(msg["content"])
 
-Rows: {df.shape[0]}
-Columns: {df.shape[1]}
+        user_input = st.chat_input("Ask about data, request a plot, or stats")
 
-INSIGHTS:
-{insights}
+        if user_input:
+            st.session_state.chat_memory.append({"role": "user", "content": user_input})
+
+            chat_prompt = f"""
+You are a data assistant.
+
+Dataset profile:
+{profile}
+
+Conversation so far:
+{st.session_state.chat_memory}
+
+User request:
+{user_input}
+
+If a plot is requested:
+- Generate Plotly code using df
+- Otherwise explain in text
 """
-        st.download_button(
-            "📥 Download BI Report (TXT)",
-            report,
-            file_name="BI_Report.txt"
-        )
 
-        st.download_button(
-            "📥 Download Dataset Snapshot (CSV)",
-            df.to_csv(index=False),
-            file_name="Dataset.csv"
-        )
+            reply = llm(chat_prompt)
+            st.session_state.chat_memory.append({"role": "assistant", "content": reply})
+            st.chat_message("assistant").markdown(reply)
 
-else:
-    st.info("⬅️ Upload a dataset to start.")
+# ======================================================
+# 4️⃣ EMAIL AGENT (STUB)
+# ======================================================
+if send_email and df is not None:
+    st.sidebar.success("📧 Email agent triggered (stub).")
+
+    email_prompt = f"""
+Create an executive-ready email summary including:
+- Dataset overview
+- Key insights
+- Description of dashboard visuals
+
+Dataset profile:
+{profile}
+"""
+
+    email_content = llm(email_prompt)
+
+    st.sidebar.text_area("📨 Email Preview", email_content, height=300)
