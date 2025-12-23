@@ -7,7 +7,6 @@ from openai import OpenAI
 # ⚠️ API CONFIG (HARDCODED AS REQUESTED)
 # =====================================================
 OPENROUTER_API_KEY = "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"
-
 MODEL = "openai/gpt-oss-20b:free"
 
 client = OpenAI(
@@ -20,7 +19,7 @@ client = OpenAI(
 # =====================================================
 st.set_page_config(
     page_title="LLM-Powered BI Platform",
-       layout="wide"
+    layout="wide"
 )
 
 st.title("🤖 LLM-Powered Data Analysis & BI Platform")
@@ -45,6 +44,7 @@ def llm(prompt: str) -> str:
 # =====================================================
 for key in [
     "profile",
+    "top10",
     "summary",
     "eda_plan",
     "dashboard_code",
@@ -73,7 +73,7 @@ if uploaded_file:
     )
 
 # =====================================================
-# DATA PROFILER (AGENT 1)
+# DATA PROFILER
 # =====================================================
 def profile_agent(df: pd.DataFrame) -> dict:
     return {
@@ -91,41 +91,61 @@ summary_tab, dashboard_tab, chat_tab = st.tabs(
 )
 
 # =====================================================
-# 1️⃣ SUMMARY SECTION (SEQUENTIAL PROMPTING)
+# 1️⃣ SUMMARY SECTION (TOP 10 + PROFILE)
 # =====================================================
 if df is not None:
     with summary_tab:
 
         if st.session_state.profile is None:
             st.session_state.profile = profile_agent(df)
+            st.session_state.top10 = df.head(10)
 
-            # ---- Prompt 1: Summary + Questions
             summary_prompt = f"""
 You are a data analyst.
 
-Using ONLY the dataset profile below:
-1. Write a concise summary of the dataset
-2. Suggest exactly 3 insightful analytical questions
+You are given:
+1. Dataset profile (schema-level information)
+2. Top 10 rows of the dataset (sample)
+
+Your tasks:
+- Summarize the dataset
+- Highlight key patterns or issues visible from the sample
+- Suggest exactly 3 analytical questions
 
 Dataset Profile:
 {st.session_state.profile}
+
+Top 10 Rows:
+{st.session_state.top10.to_string(index=False)}
 """
+
             st.session_state.summary = llm(summary_prompt)
 
-            # ---- Prompt 2: EDA Plan
             eda_prompt = f"""
-Suggest EDA ideas using ONLY existing columns.
-Do NOT aggregate, transform, or create new columns.
+Based ONLY on:
+- Dataset profile
+- Top 10 rows
+
+Suggest EDA directions.
+Do NOT assume full data distribution.
+Do NOT aggregate or create new columns.
 
 Dataset Profile:
 {st.session_state.profile}
+
+Top 10 Rows:
+{st.session_state.top10.to_string(index=False)}
 """
             st.session_state.eda_plan = llm(eda_prompt)
 
+        st.markdown("### 🔍 Dataset Sample (Top 10 Rows)")
+        st.dataframe(st.session_state.top10, use_container_width=True)
+
+        st.markdown("### 🧠 AI Summary & Insights")
         st.markdown(st.session_state.summary)
 
 # =====================================================
-# 2️⃣ DASHBOARD SECTION (LLM CODE GENERATOR)
+# 2️⃣ DASHBOARD SECTION (UNCHANGED)
 # =====================================================
 if df is not None:
     with dashboard_tab:
@@ -135,21 +155,30 @@ if df is not None:
             dashboard_prompt = f"""
 You are a BI dashboard developer.
 
-Dataset Profile:
-{st.session_state.profile}
+You are given:
+- Dataset profile
+- Top 10 rows
+- EDA plan
 
-EDA Plan:
-{st.session_state.eda_plan}
-
-STRICT RULES:
+RULES:
 - Use Plotly Express
 - DataFrame name: df
+- pandas available as pd
 - No aggregation
-- No new or derived columns
+- No new columns
 - No file access
 - Create KPI cards using st.metric
 - Create 2–3 interactive charts
-- Output ONLY executable Python code (no markdown)
+- Output ONLY executable Python code
+
+Dataset Profile:
+{st.session_state.profile}
+
+Top 10 Rows:
+{st.session_state.top10.to_string(index=False)}
+
+EDA Plan:
+{st.session_state.eda_plan}
 """
 
             st.session_state.dashboard_code = llm(dashboard_prompt)
@@ -158,24 +187,23 @@ STRICT RULES:
             exec(
                 st.session_state.dashboard_code,
                 {},
-                {"st": st, "df": df, "px": px}
+                {"st": st, "df": df, "px": px, "pd": pd}
             )
         except Exception as e:
             st.error("❌ Dashboard execution failed")
             st.exception(e)
 
 # =====================================================
-# 3️⃣ CHATBOT SECTION (MEMORY + PLOTS)
+# 3️⃣ CHATBOT (PROMPT-RETRIEVAL BASED)
 # =====================================================
 if df is not None:
     with chat_tab:
 
-        # Display chat history
         for msg in st.session_state.chat_history:
             st.chat_message(msg["role"]).markdown(msg["content"])
 
         user_input = st.chat_input(
-            "Ask questions, request plots, or regenerate dashboard"
+            "Ask about the dataset, sample, or request a plot"
         )
 
         if user_input:
@@ -184,29 +212,30 @@ if df is not None:
             )
 
             chat_prompt = f"""
-You are a conversational data assistant.
+You are a dataset assistant.
+
+You can answer ONLY using:
+- Dataset profile
+- Top 10 rows
+- Previous chat context
+
+If a question cannot be answered reliably from this information,
+explicitly say so.
 
 Dataset Profile:
 {st.session_state.profile}
 
+Top 10 Rows:
+{st.session_state.top10.to_string(index=False)}
+
 Chat History:
 {st.session_state.chat_history}
 
-User Query:
+User Question:
 {user_input}
-
-Rules:
-- If user asks to regenerate dashboard, return EXACTLY: REGENERATE_DASHBOARD
-- If user asks for a plot, return Plotly code ONLY using df
-- Otherwise respond in natural language
 """
 
             reply = llm(chat_prompt)
-
-            # Handle dashboard regeneration
-            if "REGENERATE_DASHBOARD" in reply:
-                st.session_state.dashboard_code = None
-                reply = "✅ Dashboard regenerated based on your request."
 
             st.session_state.chat_history.append(
                 {"role": "assistant", "content": reply}
